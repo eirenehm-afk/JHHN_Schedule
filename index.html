@@ -786,7 +786,7 @@ function togglePalette(mid, e) {
 function pickColor(mid, hex, e) {
   e.stopPropagation();
   const m=getMember(mid);
-  if (m) { m.color=hex; applyMemberCSS(m); buildPalette(mid); renderLib(); renderView(); autoSave(); }
+  if (m) { m.color=hex; applyMemberCSS(m); buildPalette(mid); renderLib(); renderView(); buildTabs(); autoSave(); }
   document.getElementById('palette_'+mid).classList.remove('open');
 }
 function closePalettes() { document.querySelectorAll('.color-palette').forEach(p=>p.classList.remove('open')); }
@@ -1722,8 +1722,10 @@ function calSelectDate(dateStr) {
 
 function buildTabs() {
   const dates=weekDates();
-  let h=`<button class="day-tab week-tab${viewMode==='week'?' active':''}" onclick="switchView('week')">주간</button>`;
-  h+=DAYS.map((d,i)=>`<button class="day-tab${IS_WE[i]?' we':''}${viewMode==='day'&&i===curDay?' active':''}" onclick="switchDay(${i})">${d}<br><span style="font-size:.52rem;font-weight:300">${dates[i].m}/${dates[i].d}</span></button>`).join('');
+  // 멤버 색상 점 HTML (탭 하단에 표시)
+  const dotsHtml = members.map(m=>`<span style="display:inline-block;width:5px;height:5px;border-radius:50%;background:${m.color};margin:0 1px;"></span>`).join('');
+  let h=`<button class="day-tab week-tab${viewMode==='week'?' active':''}" onclick="switchView('week')">주간<br><span style="font-size:.52rem;font-weight:300">전체</span></button>`;
+  h+=DAYS.map((d,i)=>`<button class="day-tab${IS_WE[i]?' we':''}${viewMode==='day'&&i===curDay?' active':''}" onclick="switchDay(${i})">${d}<br><span style="font-size:.52rem;font-weight:300">${dates[i].m}/${dates[i].d}</span><br><span style="line-height:1.8">${dotsHtml}</span></button>`).join('');
   document.getElementById('dayTabs').innerHTML=h;
   const wd=weekDates();
   const lbl=document.getElementById('dateLbl');
@@ -2021,56 +2023,51 @@ try {
 renderMembers(); buildTabs(); renderLib(); renderView();
 </script>
 
-<!-- Firebase + Firestore -->
-<script type="module">
-import { initializeApp } from "https://www.gstatic.com/firebasejs/12.10.0/firebase-app.js";
-import { getFirestore, doc, getDoc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/12.10.0/firebase-firestore.js";
+<!-- Supabase -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+const SUPABASE_URL = 'https://ostnfpdviuknmywlhppy.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_d286MmHxVVPJ7Rw6eQ0H6A_tZgWH2mG';
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
-const firebaseConfig = {
-  apiKey: "AIzaSyCfoZ0MhA49w_kiNuoMh9x2VCSm2xilplU",
-  authDomain: "hanaschedule-6afc1.firebaseapp.com",
-  projectId: "hanaschedule-6afc1",
-  storageBucket: "hanaschedule-6afc1.firebasestorage.app",
-  messagingSenderId: "912726273574",
-  appId: "1:912726273574:web:9e346af2d75c5203fb80e7"
-};
-
-const app = initializeApp(firebaseConfig);
-const db  = getFirestore(app);
-const DOC = doc(db, 'family', 'main');
+let isSaving = false;
+window._setFsSaving = (v) => { isSaving = v; };
 
 async function fsLoad() {
   try {
-    const snap = await getDoc(DOC);
-    if (!snap.exists()) return false;
-    const data = snap.data();
-    if (window._setAppState) window._setAppState(data);
+    const { data, error } = await sb
+      .from('schedule')
+      .select('data')
+      .eq('id', 'main')
+      .single();
+    if (error || !data || !data.data || Object.keys(data.data).length === 0) return false;
+    if (window._setAppState) window._setAppState(data.data);
     if (window._renderAll)   window._renderAll();
     return true;
-  } catch(e) { console.error('Firestore load:', e); return false; }
+  } catch(e) { console.error('Supabase load:', e); return false; }
 }
 
 async function fsSave() {
   try {
-    if (window._setFsSaving) window._setFsSaving(true);
+    window._setFsSaving(true);
     const st = window._getAppState ? window._getAppState() : {};
     const now = Date.now();
     st.lastSaved = now;
-    if (window._setAppState) window._setAppState({lastSaved: now});
-    await setDoc(DOC, {...st, updatedAt: now});
+    if (window._setAppState) window._setAppState({ lastSaved: now });
+    const { error } = await sb
+      .from('schedule')
+      .upsert({ id: 'main', data: st, updated_at: now });
+    if (error) throw error;
     const b = document.getElementById('saveBadge');
-    if (b) { b.textContent='☁️ 저장됨'; setTimeout(()=>{b.textContent='';},2000); }
-  } catch(e) { console.error('Firestore save:', e); }
-  finally { setTimeout(()=>{ if(window._setFsSaving) window._setFsSaving(false); }, 1000); }
+    if (b) { b.textContent = '☁️ 저장됨'; setTimeout(() => { b.textContent = ''; }, 2000); }
+  } catch(e) { console.error('Supabase save:', e); }
+  finally { setTimeout(() => { window._setFsSaving(false); }, 1000); }
 }
 
 window._firestoreSave = fsSave;
 
 const badge = document.getElementById('saveBadge');
 if (badge) badge.textContent = '☁️ 동기화 중…';
-
-let isSaving = false;
-window._setFsSaving = (v) => { isSaving = v; };
 
 fsLoad().then(loaded => {
   if (!loaded) {
@@ -2079,16 +2076,21 @@ fsLoad().then(loaded => {
   }
   if (badge) badge.textContent = '';
 
-  onSnapshot(DOC, (snap) => {
-    if (!snap.exists()) return;
-    if (isSaving) return;
-    const data = snap.data();
-    const st = window._getAppState ? window._getAppState() : {};
-    if (data.updatedAt && st.lastSaved && data.updatedAt <= st.lastSaved) return;
-    if (window._setAppState) window._setAppState(data);
-    if (window._renderAll) window._renderAll();
-    showToast('🔄 다른 기기에서 업데이트됐어요');
-  });
+  // 실시간 동기화 (Supabase Realtime)
+  sb.channel('schedule-changes')
+    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'schedule', filter: 'id=eq.main' },
+      (payload) => {
+        if (isSaving) return;
+        const incoming = payload.new;
+        if (!incoming || !incoming.data) return;
+        const st = window._getAppState ? window._getAppState() : {};
+        if (incoming.updated_at && st.lastSaved && incoming.updated_at <= st.lastSaved) return;
+        if (window._setAppState) window._setAppState(incoming.data);
+        if (window._renderAll)   window._renderAll();
+        showToast('🔄 다른 기기에서 업데이트됐어요');
+      }
+    )
+    .subscribe();
 });
 </script>
 </body>
