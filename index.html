@@ -423,6 +423,7 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--text
     <div class="fg" id="fgRepeat">
       <label>반복</label>
       <div class="repeat-btns">
+        <button class="repeat-btn" id="rp_once"      onclick="setRepeat('once')">한번만</button>
         <button class="repeat-btn" id="rp_week"      onclick="setRepeat('week')">이번주만</button>
         <button class="repeat-btn" id="rp_every"     onclick="setRepeat('every')">매주</button>
         <button class="repeat-btn" id="rp_month"     onclick="setRepeat('month')">매달</button>
@@ -441,7 +442,7 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--text
     </div>
     <!-- 시작/종료 날짜 -->
     <div class="fg" id="fgStartDate" style="display:none;">
-      <label>시작 날짜 <span style="font-weight:300;text-transform:none;letter-spacing:0">(이 날짜부터 표시)</span></label>
+      <label id="startDateLabel">시작 날짜 <span style="font-weight:300;text-transform:none;letter-spacing:0">(이 날짜부터 표시)</span></label>
       <input type="date" id="startDate"
         style="width:100%;padding:9px 11px;border:1px solid var(--border);border-radius:10px;
         font-size:.86rem;background:var(--bg);color:var(--text);">
@@ -852,6 +853,13 @@ function isLibItemVisible(it) {
   const viewSun = new Date(viewMon.getFullYear(), viewMon.getMonth(), viewMon.getDate() + 6);
   viewSun.setHours(23, 59, 59, 999);
 
+  // 한번만: 해당 날짜가 이번 주에 포함될 때만 표시
+  if (it.repeat === 'once') {
+    if (!it.startDate) return false;
+    const d = parseLocalDate(it.startDate);
+    return d >= viewMon && d <= viewSun;
+  }
+
   // 이번주만 - 만료됐으면 숨김, 유효하면 해당 주에서만 표시
   if (it.repeat === 'week') {
     if (isWeekOnlyExpired(it)) return false;
@@ -1018,6 +1026,31 @@ function openLibOv(id=null) {
   closeSidebar();
   setTimeout(()=>document.getElementById('lName').focus(),80);
 }
+// 그리드 터치로 빠른 일정 추가 - 날짜·시간·멤버 자동 설정
+function openLibOvQuick(di, mid, startMin, endMin, dateStr) {
+  libEditId = null;
+  whoSel = mid ? [mid] : members.map(m=>m.id);
+  daysSel = [di];
+  repeatSel = 'once';
+  evTypeSel = 'single';
+  monthWeekSel = 1;
+  endCond = 'none';
+  document.getElementById('libTitle').textContent = '일정 추가';
+  document.getElementById('lName').value = '';
+  document.getElementById('lType').value = 'act';
+  buildPicker('tpLS', startMin);
+  buildPicker('tpLE', endMin);
+  buildPicker('tpMLS', startMin);
+  buildPicker('tpMLE', endMin);
+  const sdEl = document.getElementById('startDate');
+  if (sdEl) sdEl.value = dateStr;
+  updEvType(); updWho(); updRepeat(); buildDaySel();
+  setEndCond('none');
+  document.getElementById('libOv').classList.add('open');
+  positionModal('libModal');
+  closeSidebar();
+  setTimeout(()=>document.getElementById('lName').focus(), 80);
+}
 function closeLibOv() { document.getElementById('libOv').classList.remove('open'); }
 
 function setEvType(t) { evTypeSel=t; updEvType(); }
@@ -1094,7 +1127,7 @@ function updEcCountPreview() {
 }
 function setMonthWeek(n) { monthWeekSel=n; updRepeat(); }
 function updRepeat() {
-  ['week','every','month','monthweek'].forEach(r=>{
+  ['once','week','every','month','monthweek'].forEach(r=>{
     const btn=document.getElementById('rp_'+r);
     if (btn) btn.className='repeat-btn'+(repeatSel===r?' sel':'');
   });
@@ -1105,11 +1138,23 @@ function updRepeat() {
     if (btn) btn.className='day-btn'+(monthWeekSel===n?' on':'');
   });
   const fg=document.getElementById('fgDaySel');
-  if (fg) fg.style.display=(repeatSel==='month'||repeatSel==='monthweek')?'none':'';
+  // 한번만/매달/매월N째: 요일 선택 숨김
+  if (fg) fg.style.display=(repeatSel==='once'||repeatSel==='month'||repeatSel==='monthweek')?'none':'';
   const fgSd=document.getElementById('fgStartDate');
-  if (fgSd) fgSd.style.display=(repeatSel==='week')?'none':'';
+  const sdLabel=document.getElementById('startDateLabel');
+  if (repeatSel==='once') {
+    // 한번만: 날짜 필수 표시, 라벨 변경
+    if (fgSd) fgSd.style.display='';
+    if (sdLabel) sdLabel.innerHTML='날짜 <span style="color:#c05050;font-size:.7rem">*필수</span>';
+  } else if (repeatSel==='week') {
+    if (fgSd) fgSd.style.display='none';
+    if (sdLabel) sdLabel.innerHTML='시작 날짜 <span style="font-weight:300;text-transform:none;letter-spacing:0">(이 날짜부터 표시)</span>';
+  } else {
+    if (fgSd) fgSd.style.display='';
+    if (sdLabel) sdLabel.innerHTML='시작 날짜 <span style="font-weight:300;text-transform:none;letter-spacing:0">(이 날짜부터 표시)</span>';
+  }
   const fgEc=document.getElementById('fgEndCond');
-  if (fgEc) fgEc.style.display=(repeatSel==='week')?'none':'';
+  if (fgEc) fgEc.style.display=(repeatSel==='week'||repeatSel==='once')?'none':'';
   updMonthWeekPreview();
   updEndCond();
 }
@@ -1200,7 +1245,13 @@ function saveLib() {
   }
 
   const saveData = {name,ds,de,type,who,days,repeat:repeatSel,multiDay,monthWeek,endCond:endCondVal,endCount,endDate,startDate};
-  const editId = libEditId; // 모달 닫히기 전에 캡처
+  const editId = libEditId;
+
+  // 한번만: 날짜 필수
+  if (repeatSel === 'once' && !startDate) {
+    showToast('⚠️ 날짜를 선택해주세요');
+    return;
+  }
 
   // 수정 모드이고 반복 일정인 경우 → 적용 범위 선택
   if (editId) {
@@ -1328,6 +1379,21 @@ function addToSchedule(it) {
     return;
   }
 
+  // 한번만: startDate의 요일에만 등록, _onceDate로 특정 날짜 기억
+  if (it.repeat==='once') {
+    if (!it.startDate) return;
+    const d=parseLocalDate(it.startDate);
+    const di=d.getDay()===0?6:d.getDay()-1;
+    targets.forEach(mid=>{
+      if (!sched[di]) sched[di]={};
+      if (!sched[di][mid]) sched[di][mid]=[];
+      sched[di][mid].push({id:++evSeq,lid:it.id,name:it.name,s:it.ds,e:it.de,
+        type:it.type,who:it.who,_onceDate:it.startDate});
+      markOverlaps(di);
+    });
+    return;
+  }
+
   if (it.repeat==='week') {
     const wk=getViewWeekKey();
     targets.forEach(mid=>{
@@ -1425,11 +1491,18 @@ function isEvVisible(ev, di) {
   if (ev._monthWeek && !isNthWeekdayOfMonth(ev._monthWeek,di)) return false;
   const exc=getExc(ev.id);
   if (exc&&exc.skip) return false;
+  // 한번만: 정확히 그 날짜의 주+요일에만 표시
+  if (ev._onceDate) {
+    const mon = getMonday(weekOffset);
+    const evDate = new Date(mon.getFullYear(), mon.getMonth(), mon.getDate() + di);
+    const onceDate = parseLocalDate(ev._onceDate);
+    if (evDate.getTime() !== onceDate.getTime()) return false;
+  }
   const it = ev.lid ? library.find(i=>i.id===ev.lid) : null;
   if (it) {
     const mon = getMonday(weekOffset);
     const evDate = new Date(mon.getFullYear(), mon.getMonth(), mon.getDate() + di);
-    if (it.startDate) {
+    if (it.startDate && it.repeat !== 'once') {
       const sd = parseLocalDate(it.startDate);
       if (evDate < sd) return false;
     }
@@ -1649,6 +1722,24 @@ function renderView() {
       const ln=document.createElement('div'); ln.className='now-line'; ln.style.top=y+'px'; g.appendChild(ln);
     });
   }
+  // 그리드 터치/클릭으로 빠른 일정 추가
+  document.querySelectorAll('.slots-grid, .week-slots').forEach(grid=>{
+    grid.addEventListener('click', e=>{
+      if (e.target.closest('.ev,.ev-shared,.now-line')) return;
+      const di = parseInt(grid.dataset.day);
+      const mid = grid.dataset.child;
+      const rect = grid.getBoundingClientRect();
+      const relY = e.clientY - rect.top + grid.scrollTop;
+      const rawMin = S_MIN + (relY / SH) * SLOT;
+      const startMin = snap5(Math.max(S_MIN, Math.min(E_MIN - 60, rawMin)));
+      const endMin = Math.min(E_MIN, startMin + 60);
+      // 해당 날짜 계산
+      const mon = getMonday(weekOffset);
+      const evDate = new Date(mon.getFullYear(), mon.getMonth(), mon.getDate() + di);
+      const dateStr = toLocalDateStr(evDate);
+      openLibOvQuick(di, mid, startMin, endMin, dateStr);
+    });
+  });
   if (viewMode==='day') {
     setTimeout(()=>{
       const sc=document.getElementById('gridScroll');
